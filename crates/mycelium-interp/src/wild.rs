@@ -33,14 +33,16 @@
 //! |----------|----------------------|--------|
 //! | `wild:entropy_fill` | `Binary{N} → Bytes` | fill `n` bytes from host RNG |
 //! | `wild:mono_nanos` | `() → Binary{64}` | monotonic nanoseconds |
-//! | `wild:read_capped` | `(Bytes path, Binary{N} max) → Bytes` | read ≤ `min(max, HARD_CAP)` from path |
+//! | `wild:read_capped` | `(Bytes path, Binary{N} max) → Bytes` | read path; refuse if source > `min(max, HARD_CAP)` |
 //!
 //! Results are tagged **`Declared`** (VR-5 — OS contact has no proven bound). Hard byte caps
-//! refuse oversized requests rather than silently truncating (G2 / P3).
+//! refuse oversized requests rather than silently truncating (G2 / P3). Path reads refuse when
+//! the source has more than the effective cap bytes (fail-closed; never a silent prefix).
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use mycelium_core::{
@@ -94,12 +96,16 @@ pub trait HostFloor: Send + Sync {
     /// Monotonic nanoseconds since an unspecified process-local epoch (non-decreasing in-process).
     fn mono_nanos(&self) -> u64;
 
-    /// Read up to `cap` bytes from `path`. Must refuse (not truncate) when the file is larger than
-    /// `cap` if the implementation can detect it; partial reads that hit an OS error must surface
-    /// as `Err` (G2).
+    /// Read at most `cap` bytes from `path`. **Must refuse** (return `Err`) when the source
+    /// contains more than `cap` bytes — never silently return a prefix (G2 / fail-closed, matching
+    /// entropy hard-cap refusal).
+    ///
+    /// Prefer detecting oversize by reading `cap + 1` bytes (or equivalent), not by trusting
+    /// metadata length alone: file size can race with concurrent writers. Partial reads that hit
+    /// an OS error must surface as `Err`.
     ///
     /// # Errors
-    /// Returns a host error string on OS failure or a cap violation the floor chooses to refuse.
+    /// Returns a host error string on OS failure or when the source exceeds `cap`.
     fn read_capped(&self, path: &Path, cap: usize) -> Result<Vec<u8>, String>;
 }
 
@@ -107,7 +113,8 @@ pub trait HostFloor: Send + Sync {
 ///
 /// - Entropy: `/dev/urandom` (Unix); explicit `Err` when unavailable.
 /// - Clock: `std::time::Instant` process-local origin (same shape as `std-sys::time::mono_nanos`).
-/// - Read: `std::fs::File` + capped `take(cap)` — returns at most `cap` bytes (short read = EOF).
+/// - Read: `std::fs::File` + fail-closed cap — refuses when the source has more than `cap` bytes
+///   (detected via a `cap + 1` probe read; not metadata-only, so concurrent growth is honest).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StdHostFloor;
 
@@ -131,18 +138,30 @@ impl HostFloor for StdHostFloor {
     fn read_capped(&self, path: &Path, cap: usize) -> Result<Vec<u8>, String> {
         let mut f =
             std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-        // Cap by construction: `take` never yields more than `cap` bytes.
-        let mut limited = f.by_ref().take(u64::try_from(cap).unwrap_or(u64::MAX));
+        // Fail-closed oversize: read at most cap+1 bytes. Observing cap+1 means the source has
+        // more than cap at the time of the read. We deliberately do not use metadata length alone
+        // — metadata can race with concurrent writers; the cap+1 probe is the detection.
+        // (If `cap == usize::MAX`, the probe saturates and cannot distinguish; callers use small
+        // caps bounded by HOST_BYTE_HARD_CAP.)
+        let probe = u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1);
+        let mut limited = f.by_ref().take(probe);
         let mut out = Vec::new();
         limited
             .read_to_end(&mut out)
             .map_err(|e| format!("read {}: {e}", path.display()))?;
+        if out.len() > cap {
+            return Err(format!(
+                "{}: size exceeds {cap}-byte cap (refused, not truncated)",
+                path.display()
+            ));
+        }
         Ok(out)
     }
 }
 
-/// A host-op implementation: pure-looking signature, may perform host effects through the floor.
-pub type HostOpFn = fn(op: &str, args: &[&Value]) -> Result<Value, EvalError>;
+/// A host-op implementation. [`Arc`] so handlers may capture a [`HostFloor`] (dynamic dispatch
+/// for [`HostOpRegistry::with_floor`] / A1b adapters).
+pub type HostOpFn = Arc<dyn Fn(&str, &[&Value]) -> Result<Value, EvalError> + Send + Sync>;
 
 /// Name → host-handler table the interpreter dispatches `wild:<name>` through.
 ///
@@ -163,41 +182,55 @@ impl HostOpRegistry {
     }
 
     /// The A1 min built-in host floor (`entropy_fill`, `mono_nanos`, `read_capped`) over
-    /// [`StdHostFloor`]. Does **not** grant `ffi` by itself — pair with
-    /// [`HostCapabilities::with_ffi`] via [`crate::Interpreter::with_host_floor`].
+    /// [`StdHostFloor`]. Equivalent to [`with_floor`]`(Arc::new(StdHostFloor))`. Does **not**
+    /// grant `ffi` by itself — pair with [`HostCapabilities::with_ffi`] via
+    /// [`crate::Interpreter::with_host_floor`].
     #[must_use]
     pub fn with_min_floor() -> Self {
+        Self::with_floor(Arc::new(StdHostFloor))
+    }
+
+    /// Install the min built-in set, binding every handler to the given floor via dynamic
+    /// dispatch. Callers that pass a sandboxed or mock [`HostFloor`] get that floor — never a
+    /// silent fall-through to [`StdHostFloor`].
+    #[must_use]
+    pub fn with_floor(floor: Arc<dyn HostFloor>) -> Self {
         let mut r = Self::empty();
-        r.register("entropy_fill", host_entropy_fill);
-        r.register("mono_nanos", host_mono_nanos);
-        r.register("read_capped", host_read_capped);
+        {
+            let floor = Arc::clone(&floor);
+            r.register("entropy_fill", move |op, args| {
+                host_entropy_fill(op, args, floor.as_ref())
+            });
+        }
+        {
+            let floor = Arc::clone(&floor);
+            r.register("mono_nanos", move |op, args| {
+                host_mono_nanos(op, args, floor.as_ref())
+            });
+        }
+        {
+            let floor = Arc::clone(&floor);
+            r.register("read_capped", move |op, args| {
+                host_read_capped(op, args, floor.as_ref())
+            });
+        }
         r
     }
 
-    /// Install the min built-in set, binding handlers to the given floor.
-    ///
-    /// A1 ships free-function handlers closed over [`StdHostFloor`] (see [`with_min_floor`]); this
-    /// constructor documents the A1b entry point. Until A1b lands with a dynamic handler table,
-    /// `floor` is only type-checked for the trait object shape — the registered handlers still use
-    /// [`StdHostFloor`]. Callers that need a custom floor today should [`register`] their own
-    /// `HostOpFn`s.
-    #[must_use]
-    pub fn with_floor(_floor: std::sync::Arc<dyn HostFloor>) -> Self {
-        // A1 residual: free-function table is closed over StdHostFloor. A1b promotes this to a
-        // closure table capturing `floor` (or re-registers std-sys-backed free fns). Keeping the
-        // signature stable so A1b is a body swap, not an API invent.
-        Self::with_min_floor()
-    }
-
     /// Register (or replace) a host op under a bare name.
-    pub fn register(&mut self, name: &str, f: HostOpFn) {
-        self.table.insert(name.to_owned(), f);
+    ///
+    /// Accepts free functions and floor-capturing closures.
+    pub fn register<F>(&mut self, name: &str, f: F)
+    where
+        F: Fn(&str, &[&Value]) -> Result<Value, EvalError> + Send + Sync + 'static,
+    {
+        self.table.insert(name.to_owned(), Arc::new(f));
     }
 
     /// Look up a host op by bare name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<HostOpFn> {
-        self.table.get(name).copied()
+        self.table.get(name).cloned()
     }
 
     /// Registered bare names (sorted).
@@ -266,7 +299,7 @@ fn as_uint(op: &str, v: &Value) -> Result<u64, EvalError> {
 ///
 /// `n` is the unsigned value of the Binary operand. `n > HOST_BYTE_HARD_CAP` is an explicit
 /// refusal (never a silent truncate).
-fn host_entropy_fill(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
+fn host_entropy_fill(op: &str, args: &[&Value], floor: &dyn HostFloor) -> Result<Value, EvalError> {
     expect_arity(op, args, 1)?;
     let n_u64 = as_uint(op, args[0])?;
     let n = usize::try_from(n_u64).map_err(|_| EvalError::PrimType {
@@ -283,7 +316,7 @@ fn host_entropy_fill(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
         });
     }
     let mut buf = vec![0u8; n];
-    StdHostFloor
+    floor
         .fill_entropy(&mut buf)
         .map_err(|why| EvalError::PrimType {
             prim: op.to_owned(),
@@ -293,9 +326,9 @@ fn host_entropy_fill(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
 }
 
 /// `wild:mono_nanos : () → Binary{64}` — process-local monotonic nanoseconds.
-fn host_mono_nanos(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
+fn host_mono_nanos(op: &str, args: &[&Value], floor: &dyn HostFloor) -> Result<Value, EvalError> {
     expect_arity(op, args, 0)?;
-    let nanos = StdHostFloor.mono_nanos();
+    let nanos = floor.mono_nanos();
     let bits = binary::uint_to_bits(nanos, 64).ok_or_else(|| EvalError::PrimType {
         prim: op.to_owned(),
         why: "internal: u64 nanos failed to encode as Binary{64}".to_owned(),
@@ -303,9 +336,10 @@ fn host_mono_nanos(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
     host_declared_result(op, args, Repr::Binary { width: 64 }, Payload::Bits(bits))
 }
 
-/// `wild:read_capped : (Bytes path, Binary{N} max) → Bytes` — read up to `min(max, HARD_CAP)`
-/// bytes from the UTF-8 path. Cap is by construction (`take`); never a silent oversize alloc.
-fn host_read_capped(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
+/// `wild:read_capped : (Bytes path, Binary{N} max) → Bytes` — read at most
+/// `min(max, HARD_CAP)` bytes from the UTF-8 path. File oversize relative to the effective cap
+/// is refused by the floor (fail-closed); never a silent prefix or silent oversize alloc.
+fn host_read_capped(op: &str, args: &[&Value], floor: &dyn HostFloor) -> Result<Value, EvalError> {
     expect_arity(op, args, 2)?;
     let path_bytes = args[0].bytes().ok_or_else(|| EvalError::PrimType {
         prim: op.to_owned(),
@@ -322,8 +356,7 @@ fn host_read_capped(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
     })?;
     let cap = max.min(HOST_BYTE_HARD_CAP);
     if max > HOST_BYTE_HARD_CAP {
-        // Still proceed at HARD_CAP, but the caller asked for more than we will ever yield —
-        // refuse rather than silently shrink the request (G2: the hard cap is a hard refuse when
+        // Refuse rather than silently shrink the request (G2: the hard cap is a hard refuse when
         // the *requested* max alone exceeds it).
         return Err(EvalError::PrimType {
             prim: op.to_owned(),
@@ -333,7 +366,7 @@ fn host_read_capped(op: &str, args: &[&Value]) -> Result<Value, EvalError> {
             ),
         });
     }
-    let bytes = StdHostFloor
+    let bytes = floor
         .read_capped(Path::new(path_str), cap)
         .map_err(|why| EvalError::PrimType {
             prim: op.to_owned(),

@@ -27,11 +27,13 @@ L1 elaboration lowers `wild { name(args) }` to `Node::Op { prim: "wild:name", �
 
 - `wild:entropy_fill` — fill `n` bytes from host RNG (`Binary{N} → Bytes`)
 - `wild:mono_nanos` — monotonic nanos (`() → Binary{64}`)
-- `wild:read_capped` — read ≤ `min(max, 1 MiB)` from a UTF-8 path (`(Bytes, Binary{N}) → Bytes`)
+- `wild:read_capped` — read a UTF-8 path up to `min(max, 1 MiB)`; **refuses** when the source has more bytes than the effective cap (fail-closed; never a silent prefix)
+
+`HostOpRegistry::with_floor(Arc<dyn HostFloor>)` installs handlers that route through the provided floor (dynamic dispatch). `with_min_floor()` is `with_floor(Arc::new(StdHostFloor))`.
 
 **Not “Residual at elab”:** elaboration succeeds; the historical gap was an **empty runtime registry** (host miss). A1 closes that miss for the min set when the host floor is opted in.
 
-**A1b residual:** `StdHostFloor` mirrors `mycelium-std-sys` with pure `std` (no cross-repo dep). Wire a real `mycelium-std-sys` adapter through `HostFloor` next; L0 does not re-check the L1 `@std-sys` nodule marker (source-level gate).
+**A1b residual:** `StdHostFloor` mirrors `mycelium-std-sys` with pure `std` (no cross-repo dep). Wire a real `mycelium-std-sys` adapter through `HostFloor` / `with_floor` next; L0 does not re-check the L1 `@std-sys` nodule marker (source-level gate).
 
 ## Key items
 
