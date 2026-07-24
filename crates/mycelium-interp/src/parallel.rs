@@ -305,12 +305,18 @@ impl Interpreter {
                     _ => unreachable!("head == Op ⇒ node is Op"),
                 };
                 // Apply δ exactly as the sequential `step` (E-Op-Apply) does: all args are now values.
+                // A1: `wild:` routes through the host-op registry (unreachable for pure batches —
+                // `is_pure` excludes `wild:` — kept for parity with sequential dispatch, G2).
                 let values = collect_values(&normals)?;
-                let f = self
-                    .prims
-                    .get(prim)
-                    .ok_or_else(|| EvalError::UnknownPrim(prim.clone()))?;
-                let result = f(prim, &values)?;
+                let result = if prim.starts_with("wild:") {
+                    crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                } else {
+                    let f = self
+                        .prims
+                        .get(prim)
+                        .ok_or_else(|| EvalError::UnknownPrim(prim.clone()))?;
+                    f(prim, &values)?
+                };
                 tick(&fuel)?;
                 Ok(CoreValue::Repr(result))
             }

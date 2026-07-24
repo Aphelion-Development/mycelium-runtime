@@ -96,12 +96,20 @@
 //! silent). `Construct` itself takes the meet of its fields' guarantees (in the [`mycelium_core::Datum`]
 //! summary).
 //!
+//! # Host ops (`wild:`, A1 / RFC-0028 §4.3)
+//! L1 elaborates `wild { name(args) }` to `Node::Op { prim: "wild:name", … }` (KC-3 — no new node).
+//! The runtime half is [`wild`]: a [`HostOpRegistry`] + [`HostCapabilities::ffi`] gate. Default
+//! interpreters register **no** host ops and grant **no** `ffi` (fail closed / pure). Opt in with
+//! [`Interpreter::with_host_floor`]. Unknown `wild:<name>` is a typed
+//! [`EvalError::UnknownPrim`] (`host-op-not-registered`); registered-but-ungranted is
+//! [`EvalError::HostCapabilityDenied`]. This is **not** an elaboration Residual — elab succeeds;
+//! the historical gap was an empty runtime registry.
+//!
 //! # What is *not* here (by scope)
-//! Balanced-ternary **arithmetic** with an integer oracle is **M-111**; the certified binary↔ternary
-//! **swap** is **M-120** (this crate ships only the trivial identity swap,
-//! [`swap::IdentitySwapEngine`]); the full term language (abstraction/recursion/modules) is a later
-//! RFC. Composing an *approximate* input is refused until the ADR-010 bound kernels land (Phase 2 /
-//! E2-4).
+//! The certified binary↔ternary **swap** is **M-120** (this crate ships the trivial identity swap,
+//! [`swap::IdentitySwapEngine`], plus `mycelium-cert` engines for opt-in use). The A1 min host floor
+//! uses pure `std` ([`StdHostFloor`]); wiring through `mycelium-std-sys` is **A1b**. L0 does not
+//! re-check the L1 `@std-sys` nodule-header marker (source-level gate).
 //!
 //! **Trusted-base discipline (ADR-014 / DN-21 §5 F-1):** zero `unsafe` — compiler-enforced.
 #![forbid(unsafe_code)]
@@ -111,6 +119,7 @@ pub mod parallel;
 pub mod prims;
 pub mod supervise;
 pub mod swap;
+pub mod wild;
 
 #[cfg(test)]
 mod tests;
@@ -127,6 +136,10 @@ pub use supervise::{
     CancelToken, Cancelled, Escalation, RestartIntensity, Supervisor, TaskOutcome,
 };
 pub use swap::{IdentitySwapEngine, SwapEngine};
+pub use wild::{
+    HostCapabilities, HostFloor, HostOpFn, HostOpRegistry, StdHostFloor, FFI_EFFECT,
+    HOST_BYTE_HARD_CAP,
+};
 
 /// The result of one small-step attempt on a node.
 #[derive(Debug, Clone, PartialEq)]
@@ -144,7 +157,20 @@ pub enum EvalError {
     /// A free variable was encountered (the program is not closed).
     FreeVariable(String),
     /// No primitive is registered under this name.
+    ///
+    /// For a `wild:<name>` key this is the **typed host-op miss** (RFC-0028 §4.3 / A1): the host
+    /// registry has no handler for `name`. Never a silent no-op or panic (G2). See the
+    /// [`Display`](EvalError) impl for the host-capability wording.
     UnknownPrim(String),
+    /// A registered `wild:` host op was invoked without the runtime `ffi` capability grant (the
+    /// interpreter half of `@std-sys` + `!{ffi}`). Fail-closed: pure/deterministic interpreters
+    /// keep `ffi = false` and refuse every host invoke (A1; G2).
+    HostCapabilityDenied {
+        /// The bare host-op name (without the `wild:` prefix).
+        op: String,
+        /// Why the grant was refused.
+        why: String,
+    },
     /// A primitive was applied to the wrong arity/paradigm/width.
     PrimType {
         /// The primitive name.
@@ -281,12 +307,15 @@ impl core::fmt::Display for EvalError {
                 // fuse the words (`§4.3)dispatches`) — never-silent (G2). (Copilot #508.)
                 Some(op) => write!(
                     f,
-                    "host capability `{op}` not granted: the `wild` FFI floor (RFC-0028 §4.3)\
-\u{20}dispatches through the prim registry, which registers no host op by default —\
-\u{20}the `@std-sys` host must register `wild:{op}` to grant it (never silent — G2)"
+                    "host-op-not-registered: `wild:{op}` — the host-op registry (RFC-0028 §4.3 / A1)\
+\u{20}has no handler for `{op}`; register it (or use Interpreter::with_host_floor for the min\
+\u{20}built-in set) and grant `ffi` (never silent — G2)"
                 ),
                 None => write!(f, "unknown primitive: {p}"),
             },
+            EvalError::HostCapabilityDenied { op, why } => {
+                write!(f, "host capability `{op}` denied: {why}")
+            }
             EvalError::PrimType { prim, why } => write!(f, "type error in {prim}: {why}"),
             EvalError::ApproxCompositionUnsupported { prim } => write!(
                 f,
@@ -356,12 +385,17 @@ const DEFAULT_FUEL: u64 = 1_000_000;
 /// longer suffices once the pool's worker threads outlive any single `run_indexed` call (see
 /// `crate::parallel::eval_top_batch`). Cloning is cheap: `swap` is stored as `Arc<dyn SwapEngine>`
 /// (an `Arc::clone` bump, not a deep copy — `SwapEngine` itself has no `Clone` bound, since a boxed
-/// trait object can't derive one; `Arc` sidesteps that without changing the trait), `prims` is a
-/// small `BTreeMap` clone (bounded by the built-in prim count, not by program size), and `fuel` is
-/// `Copy`.
+/// trait object can't derive one; `Arc` sidesteps that without changing the trait), `prims` /
+/// `host_ops` are small `BTreeMap` clones (bounded by the built-in prim/host-op count, not by
+/// program size), and `fuel` / `host_caps` / `depth_limit` are `Copy`.
 #[derive(Clone)]
 pub struct Interpreter {
     prims: PrimRegistry,
+    /// Host-op registry for the reserved `wild:` prim namespace (RFC-0028 §4.3; A1). Empty by
+    /// default — pure/deterministic fragments see a typed miss on every `wild:<name>`.
+    host_ops: HostOpRegistry,
+    /// Runtime half of `@std-sys` + `!{ffi}`: must grant `ffi` before a registered host op runs.
+    host_caps: HostCapabilities,
     swap: Arc<dyn SwapEngine>,
     fuel: u64,
     /// The shared [`RecursionBudget`] depth ceiling on the §4.0 metric (RFC-0041 W4/W7). Defaults to
@@ -377,6 +411,9 @@ impl Default for Interpreter {
     fn default() -> Self {
         Interpreter {
             prims: PrimRegistry::with_builtins(),
+            // A1: default grants **no** host ops and **no** `ffi` — pure fragments stay pure.
+            host_ops: HostOpRegistry::empty(),
+            host_caps: HostCapabilities::default(),
             swap: Arc::new(IdentitySwapEngine),
             fuel: DEFAULT_FUEL,
             depth_limit: RecursionBudget::DEFAULT_DEPTH_LIMIT,
@@ -389,14 +426,37 @@ impl Interpreter {
     /// swap, or M-111's arithmetic prims). Takes an owned `Box` (the existing, stable public
     /// signature); internally stored as `Arc<dyn SwapEngine>` (M-864 — see the struct docs), an
     /// unconditional, allocation-free `Box` → `Arc` conversion (`Arc::from`).
+    ///
+    /// Host ops stay empty and `ffi` ungranted — use [`with_host_floor`](Self::with_host_floor) or
+    /// [`with_host_ops`](Self::with_host_ops) to opt into the `wild:` seam.
     #[must_use]
     pub fn new(prims: PrimRegistry, swap: Box<dyn SwapEngine>) -> Self {
         Interpreter {
             prims,
+            host_ops: HostOpRegistry::empty(),
+            host_caps: HostCapabilities::default(),
             swap: Arc::from(swap),
             fuel: DEFAULT_FUEL,
             depth_limit: RecursionBudget::DEFAULT_DEPTH_LIMIT,
         }
+    }
+
+    /// Install the A1 min host-op floor (`wild:entropy_fill`, `wild:mono_nanos`,
+    /// `wild:read_capped`) **and** grant the runtime `ffi` capability. The only opt-in that makes
+    /// host-shaped programs evaluate; the default interpreter remains fail-closed (G2).
+    #[must_use]
+    pub fn with_host_floor(mut self) -> Self {
+        self.host_ops = HostOpRegistry::with_min_floor();
+        self.host_caps = HostCapabilities::default().with_ffi();
+        self
+    }
+
+    /// Install a custom host-op registry and capability grants (A1 extensibility / A1b wiring).
+    #[must_use]
+    pub fn with_host_ops(mut self, host_ops: HostOpRegistry, host_caps: HostCapabilities) -> Self {
+        self.host_ops = host_ops;
+        self.host_caps = host_caps;
+        self
     }
 
     /// Override the step budget.
@@ -490,12 +550,19 @@ impl Interpreter {
                     }
                 }
                 // (E-Op-Apply): all arguments are values → apply δ.
+                // A1 / RFC-0028 §4.3: `wild:<name>` is the reserved host-capability namespace.
+                // It never routes through the pure `PrimRegistry` (even if a caller registered a
+                // colliding name there) — only through the host-op registry + `ffi` gate.
                 let values = collect_values(args)?;
-                let f = self
-                    .prims
-                    .get(prim)
-                    .ok_or_else(|| EvalError::UnknownPrim(prim.clone()))?;
-                let result = f(prim, &values)?;
+                let result = if prim.starts_with("wild:") {
+                    crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                } else {
+                    let f = self
+                        .prims
+                        .get(prim)
+                        .ok_or_else(|| EvalError::UnknownPrim(prim.clone()))?;
+                    f(prim, &values)?
+                };
                 Ok(Step::Next(Box::new(Node::Const(result))))
             }
 

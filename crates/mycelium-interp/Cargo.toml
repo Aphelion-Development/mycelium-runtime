@@ -1,7 +1,7 @@
 [package]
 name = "mycelium-interp"
 version.workspace = true
-description = "Reference interpreter — the trusted executable semantics for the Core IR (RFC-0004; ADR-009). Skeleton; M-110."
+description = "Reference interpreter — trusted Core IR small-step semantics (RFC-0004; ADR-009; M-110) plus the A1 wild: host-op registry (RFC-0028 §4.3)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
