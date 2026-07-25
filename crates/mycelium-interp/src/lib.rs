@@ -305,11 +305,17 @@ impl core::fmt::Display for EvalError {
                 // Continued lines begin with an explicit `\u{20}` space, not a trailing space before
                 // the `\`: the repo's `trailing-whitespace` hook would strip the latter and silently
                 // fuse the words (`§4.3)dispatches`) — never-silent (G2). (Copilot #508.)
+                // A1 migration: registering `wild:name` on `PrimRegistry` is **ignored** — L0 routes
+                // exclusively through `HostOpRegistry` (bare name) + `ffi`. Name that trap so a
+                // pre-A1 consumer (L1 three-way differential, AOT env-machine) fails with a
+                // diagnosable message rather than a bare unknown-prim (cross-repo contract).
                 Some(op) => write!(
                     f,
                     "host-op-not-registered: `wild:{op}` — the host-op registry (RFC-0028 §4.3 / A1)\
-\u{20}has no handler for `{op}`; register it (or use Interpreter::with_host_floor for the min\
-\u{20}built-in set) and grant `ffi` (never silent — G2)"
+\u{20}has no handler for `{op}`; register the bare name `{op}` on `HostOpRegistry` (not\
+\u{20}`PrimRegistry`) and grant `ffi` via `Interpreter::with_host_ops` / `with_host_floor`\
+\u{20}(never silent — G2). Note: `PrimRegistry::register(\"wild:{op}\", …)` is ignored on the\
+\u{20}L0 interpreter path after A1"
                 ),
                 None => write!(f, "unknown primitive: {p}"),
             },
