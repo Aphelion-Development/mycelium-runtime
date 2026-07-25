@@ -307,9 +307,10 @@ impl core::fmt::Display for EvalError {
                 // fuse the words (`§4.3)dispatches`) — never-silent (G2). (Copilot #508.)
                 Some(op) => write!(
                     f,
-                    "host-op-not-registered: `wild:{op}` — the host-op registry (RFC-0028 §4.3 / A1)\
-\u{20}has no handler for `{op}`; register it (or use Interpreter::with_host_floor for the min\
-\u{20}built-in set) and grant `ffi` (never silent — G2)"
+                    "host-op-not-registered: host capability `{op}` is not granted — the host-op\
+\u{20}registry (RFC-0028 §4.3 / A1) has no handler for `{op}`, and no `wild:{op}` prim is\
+\u{20}registered either; register it (or use Interpreter::with_host_floor for the min built-in\
+\u{20}set) and grant `ffi` (never silent — G2)"
                 ),
                 None => write!(f, "unknown primitive: {p}"),
             },
@@ -551,11 +552,21 @@ impl Interpreter {
                 }
                 // (E-Op-Apply): all arguments are values → apply δ.
                 // A1 / RFC-0028 §4.3: `wild:<name>` is the reserved host-capability namespace.
-                // It never routes through the pure `PrimRegistry` (even if a caller registered a
-                // colliding name there) — only through the host-op registry + `ffi` gate.
+                // The host-op registry + `ffi` gate is consulted FIRST, so a `PrimRegistry` entry
+                // can never shadow (and thereby un-gate) a built-in host-floor op. A1c: on a
+                // host-registry *miss* an explicit `wild:<name>` `PrimRegistry` entry is honoured
+                // as the pre-A1 capability handle — the only handle `mycelium-l1`'s `Evaluator`
+                // and `mycelium-mlir`'s AOT can reach — so all three stages agree.
+                // See `wild::dispatch_wild`.
                 let values = collect_values(args)?;
                 let result = if prim.starts_with("wild:") {
-                    crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                    crate::wild::dispatch_wild(
+                        &self.host_ops,
+                        self.host_caps,
+                        &self.prims,
+                        prim,
+                        &values,
+                    )?
                 } else {
                     let f = self
                         .prims

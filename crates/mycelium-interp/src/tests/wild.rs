@@ -297,7 +297,7 @@ fn entropy_fill_hard_cap_refuses_oversize() {
 
 /// `wild:` never routes through the pure PrimRegistry even if a colliding name is registered there.
 #[test]
-fn wild_prefix_never_dispatches_through_pure_prim_registry() {
+fn host_floor_wins_over_a_colliding_pure_prim_registry_entry() {
     let mut prims = PrimRegistry::empty();
     // A malicious/mistaken registration of a wild: key into the pure table must be ignored.
     prims.register("wild:mono_nanos", |_p, _a| {
@@ -309,6 +309,59 @@ fn wild_prefix_never_dispatches_through_pure_prim_registry() {
         .eval(&wild_op("mono_nanos", vec![]))
         .expect("host path must win");
     assert_eq!(v.repr(), &Repr::Binary { width: 64 });
+}
+
+/// **A1c cross-stage agreement guard.** `mycelium-l1`'s `Evaluator` (`eval.rs::wild_dispatch`) and
+/// `mycelium-mlir`'s AOT (`aot.rs::run(node, &PrimRegistry, &dyn SwapEngine)`) resolve `wild:` ops
+/// through a **`PrimRegistry`** — neither takes a [`HostOpRegistry`]. So a `wild:<name>` entry in
+/// the `PrimRegistry` is the *only* capability handle those two stages have, and L0-interp must
+/// honour it too, or the three-way differential
+/// (`mycelium-l1/tests/differential.rs::wild_ffi_execution_agrees_three_ways`) diverges: L1-eval
+/// and AOT run the op while L0-interp refuses it.
+///
+/// This is the in-repo half of that guard (mycelium-interp cannot depend on mycelium-l1 — that
+/// would be a cycle). It reproduces the differential's exact registration shape.
+#[test]
+fn a_primregistry_registered_wild_op_dispatches_on_l0_interp() {
+    // Verbatim shape of `mycelium-l1/tests/differential.rs::host_registry()`.
+    let mut prims = PrimRegistry::with_builtins();
+    prims.register("wild:echo", |_p, args: &[&Value]| match args {
+        [v] => Ok((*v).clone()),
+        _ => Err(EvalError::PrimType {
+            prim: "wild:echo".to_owned(),
+            why: "the test host op `echo` expects exactly one argument".to_owned(),
+        }),
+    });
+
+    let interp = Interpreter::new(prims, Box::new(IdentitySwapEngine));
+    let out = interp
+        .eval(&wild_op("echo", vec![bin_u8(0b1011_0010)]))
+        .expect(
+            "a wild: op registered in the PrimRegistry is the pre-A1 capability handle that \
+             mycelium-l1 and mycelium-mlir still use; L0-interp must dispatch it too (A1c)",
+        );
+    assert_eq!(out.repr(), &Repr::Binary { width: 8 });
+    assert_eq!(out.payload(), bin_u8(0b1011_0010).payload());
+}
+
+/// The fallback grants **nothing** on its own: `PrimRegistry::with_builtins()` registers no
+/// `wild:` key, so `Interpreter::default()` stays fail-closed on every host op (G2).
+#[test]
+fn builtins_register_no_wild_key_so_default_stays_fail_closed() {
+    let builtins = PrimRegistry::with_builtins();
+    let builtin_wild: Vec<&str> = builtins
+        .names()
+        .into_iter()
+        .filter(|n| n.starts_with("wild:"))
+        .collect();
+    assert!(
+        builtin_wild.is_empty(),
+        "no built-in prim may live in the reserved `wild:` namespace; found {builtin_wild:?}"
+    );
+    let err = Interpreter::default()
+        .eval(&wild_op("echo", vec![bin_u8(1)]))
+        .expect_err("the default interpreter must refuse every wild: op");
+    assert!(matches!(&err, EvalError::UnknownPrim(p) if p == "wild:echo"));
 }
 
 /// Mock floor that records contact — proves `with_floor` routes through the provided Arc, not StdHostFloor.

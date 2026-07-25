@@ -309,7 +309,13 @@ impl Interpreter {
                 // `is_pure` excludes `wild:` — kept for parity with sequential dispatch, G2).
                 let values = collect_values(&normals)?;
                 let result = if prim.starts_with("wild:") {
-                    crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                    crate::wild::dispatch_wild(
+                        &self.host_ops,
+                        self.host_caps,
+                        &self.prims,
+                        prim,
+                        &values,
+                    )?
                 } else {
                     let f = self
                         .prims

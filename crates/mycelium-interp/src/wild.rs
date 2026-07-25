@@ -379,30 +379,49 @@ fn host_read_capped(op: &str, args: &[&Value], floor: &dyn HostFloor) -> Result<
 /// gate. Called from the interpreter's `(E-Op-Apply)` arm.
 ///
 /// Order (fail closed, never silent — G2):
-/// 1. Look up bare `name` in the host registry → [`EvalError::UnknownPrim`] on miss (typed miss).
-/// 2. Require [`HostCapabilities::ffi`] → [`EvalError::HostCapabilityDenied`] if ungranted.
-/// 3. Invoke the handler.
+/// 1. Look up bare `name` in the [`HostOpRegistry`] → if present, require
+///    [`HostCapabilities::ffi`] ([`EvalError::HostCapabilityDenied`] if ungranted) and invoke.
+/// 2. **A1c cross-stage compatibility.** Otherwise look up the *full* `wild:<name>` key in the
+///    [`crate::PrimRegistry`]. An explicit `wild:`-prefixed entry there is the **pre-A1 capability
+///    handle** (RFC-0028 §4.3: "registration is the grant"), and it is still the *only* handle
+///    `mycelium-l1`'s `Evaluator` (`eval.rs::wild_dispatch`) and `mycelium-mlir`'s AOT
+///    (`aot.rs::run(node, &PrimRegistry, &dyn SwapEngine)`) can reach — neither has a
+///    `HostOpRegistry` parameter. Without this arm the three-way differential
+///    (`mycelium-l1/tests/differential.rs::wild_ffi_execution_agrees_three_ways`) diverges: L1-eval
+///    and AOT run the op, L0-interp refuses it. `PrimRegistry::with_builtins()` registers **no**
+///    `wild:` key, so this arm can only fire for a host that *deliberately* registered one — it
+///    grants nothing the other two stages do not already grant, and `Interpreter::default()` stays
+///    fail-closed.
+/// 3. Both miss → [`EvalError::UnknownPrim`] (typed miss, never a silent no-op).
+///
+/// The [`HostOpRegistry`] is checked **first**, so a `PrimRegistry` entry can never shadow (and
+/// thereby un-gate) a built-in host-floor op.
 pub(crate) fn dispatch_wild(
     host_ops: &HostOpRegistry,
     caps: HostCapabilities,
+    prims: &crate::PrimRegistry,
     prim: &str,
     values: &[&Value],
 ) -> Result<Value, EvalError> {
     let name = prim
         .strip_prefix("wild:")
         .expect("dispatch_wild is only called for wild:-prefixed prims");
-    let f = host_ops
-        .get(name)
-        .ok_or_else(|| EvalError::UnknownPrim(prim.to_owned()))?;
-    if !caps.ffi {
-        return Err(EvalError::HostCapabilityDenied {
-            op: name.to_owned(),
-            why: format!(
-                "the `{FFI_EFFECT}` effect is not granted on this interpreter (runtime half of \
-                 `@std-sys` + `!{{{FFI_EFFECT}}}`); pure/deterministic fragments cannot invoke \
-                 host ops — use Interpreter::with_host_floor() to opt in"
-            ),
-        });
+    if let Some(f) = host_ops.get(name) {
+        if !caps.ffi {
+            return Err(EvalError::HostCapabilityDenied {
+                op: name.to_owned(),
+                why: format!(
+                    "the `{FFI_EFFECT}` effect is not granted on this interpreter (runtime half \
+                     of `@std-sys` + `!{{{FFI_EFFECT}}}`); pure/deterministic fragments cannot \
+                     invoke host ops — use Interpreter::with_host_floor() to opt in"
+                ),
+            });
+        }
+        return f(prim, values);
     }
-    f(prim, values)
+    // (2) pre-A1 / cross-stage grant: an explicit `wild:<name>` PrimRegistry entry.
+    if let Some(f) = prims.get(prim) {
+        return f(prim, values);
+    }
+    Err(EvalError::UnknownPrim(prim.to_owned()))
 }
