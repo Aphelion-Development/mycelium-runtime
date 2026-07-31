@@ -37,7 +37,7 @@ jobs:
     # TEMPORARY (2026-07-19, maintainer directive): one-time GitHub-hosted run so the
     # v0.464.0 cut can execute while the self-hosted fleet is offline. Revert to
     # [self-hosted, linux, x64, podman] once the release run passes.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, podman]
     steps:
       - name: Validate inputs (never-silent — a malformed rev refuses here, not downstream)
         run: |

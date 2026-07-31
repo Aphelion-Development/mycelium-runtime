@@ -7,7 +7,7 @@ on:
     branches: [main]
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, podman]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.1
