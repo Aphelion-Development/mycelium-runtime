@@ -1,6 +1,10 @@
 # Fleet security lint/scan — self-hosted. Badge reflects honest job status on trunk.
 # Hardened: least privileges, pinned gitleaks + SHA256, no unauthenticated :latest.
 # Usability: PR/push scan working tree (tip); weekly schedule scans full git history.
+#
+# TIER LABELS: security jobs do not compile Rust. Pin micro so they do not steal
+# large workers, and so cargo jobs that forget a tier cannot land here either
+# once those jobs pin large (label match is exact on all listed labels).
 name: fleet-security
 
 on:
@@ -22,7 +26,8 @@ permissions:
 jobs:
   gitleaks:
     name: gitleaks
-    runs-on: [self-hosted, linux, x64, podman]
+    # micro: secret scan binary only. No compile. Measured: micro = 0.25c/512MiB.
+    runs-on: [self-hosted, linux, x64, podman, micro]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +71,9 @@ jobs:
 
   trivy-fs:
     name: trivy filesystem (vuln+secret+license)
-    runs-on: [self-hosted, linux, x64, podman]
+    # micro: filesystem scanner, no compile. Measured: micro = 0.25c/512MiB.
+    # small (0.5c/1g) is acceptable if scan corpus grows; micro matches current fleet intent.
+    runs-on: [self-hosted, linux, x64, podman, micro]
     continue-on-error: true
     timeout-minutes: 30
     steps:
