@@ -27,7 +27,7 @@ jobs:
   gitleaks:
     name: gitleaks
     # micro: secret scan binary only. No compile. Measured: micro = 0.25c/512MiB.
-    runs-on: [self-hosted, linux, x64, podman, micro]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
     name: trivy filesystem (vuln+secret+license)
     # micro: filesystem scanner, no compile. Measured: micro = 0.25c/512MiB.
     # small (0.5c/1g) is acceptable if scan corpus grows; micro matches current fleet intent.
-    runs-on: [self-hosted, linux, x64, podman, micro]
+    runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 30
     steps:
