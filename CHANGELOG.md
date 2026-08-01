@@ -38,8 +38,29 @@ Closes the runtime host miss for L1-elaborated `wild { name(args) }` programs
 - `HostFloor::read_capped` contract aligned with behavior: refuse-on-oversize
   (cap+1 probe; metadata races documented).
 
+**Cross-repo contract (load-bearing for the release train)**
+
+- **L0 interpreter** routes `wild:` exclusively through `HostOpRegistry` +
+  `ffi`. A pre-A1 `PrimRegistry::register("wild:name", …)` is **ignored** on
+  the L0 path (fail-closed typed miss + migration diagnostic).
+- **L1 evaluator** and **codegen AOT env-machine** still dispatch via
+  `PrimRegistry` at the revisions that pin this crate today. Consumers that
+  need three-way (L1-eval ≡ L0-interp ≡ AOT) agreement on a custom host op
+  must dual-register until those paths migrate:
+  - bare name on `HostOpRegistry` + `Interpreter::with_host_ops(…, ffi)`, and
+  - `wild:name` on `PrimRegistry` for L1-eval / AOT.
+- Pin-bump of `mycelium-l1` / `mycelium-codegen` onto this A1 revision without
+  that dual-reg update will red the wild three-way differential. Fleet
+  propagation alone cannot fix an API break — a coordinated consumer PR is
+  required (see mycelium-l1#7 follow-up on the multistmt branch).
+- Min built-ins (`with_host_floor`) are **interpreter-only** until AOT learns
+  `HostOpRegistry`; `mycelium_mlir::run(wild:mono_nanos, &PrimRegistry::with_builtins(), …)`
+  remains a typed miss by design of this gate.
+
 **A1b follow-up (not in this change)**
 
 - Implement `HostFloor` over `mycelium-std-sys` (`rand::fill_bytes`,
   `time::mono_nanos`, `fs::read` + refuse-on-oversize cap) and install via
   `HostOpRegistry::with_floor` — no new cross-repo surface APIs invented here.
+- Migrate L1 evaluator + codegen AOT `wild:` dispatch onto `HostOpRegistry`
+  so dual-registration is no longer required for three-way agreement.

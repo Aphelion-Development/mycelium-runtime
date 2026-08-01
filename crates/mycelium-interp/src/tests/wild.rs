@@ -191,7 +191,7 @@ fn wild_read_capped_os_open_failure() {
         "read_capped",
         vec![bytes_val(path_bytes.as_bytes()), bin_u64(64)],
     );
-    let err = interp.eval(&node).expect_err("missing path must fail open");
+    let err = interp.eval(&node).expect_err("missing path must fail closed (explicit error)");
     assert!(
         matches!(err, EvalError::PrimType { .. }),
         "expected PrimType OS-open failure, got {err:?}"
@@ -309,6 +309,39 @@ fn wild_prefix_never_dispatches_through_pure_prim_registry() {
         .eval(&wild_op("mono_nanos", vec![]))
         .expect("host path must win");
     assert_eq!(v.repr(), &Repr::Binary { width: 64 });
+}
+
+/// Cross-repo migration pin (A1): pre-A1 consumers registered `wild:name` on `PrimRegistry` and
+/// constructed `Interpreter::new(prims, …)`. After A1 that registration is ignored — L0 requires
+/// `HostOpRegistry` + `ffi`. This test locks the refuse + diagnostic so a fleet pin-bump of
+/// mycelium-l1 (three-way wild differential) fails closed with a named migration path, never a
+/// silent wrong value and never an opaque miss.
+#[test]
+fn prim_registry_wild_registration_is_ignored_with_migration_diagnostic() {
+    let mut prims = PrimRegistry::with_builtins();
+    prims.register("wild:echo", |_p, args| match args {
+        [v] => Ok((*v).clone()),
+        _ => Err(EvalError::PrimType {
+            prim: "wild:echo".to_owned(),
+            why: "test echo expects 1 arg".to_owned(),
+        }),
+    });
+    // Pre-A1 shape: PrimRegistry only, no HostOpRegistry, no ffi.
+    let interp = Interpreter::new(prims, Box::new(IdentitySwapEngine));
+    let err = interp
+        .eval(&wild_op("echo", vec![bin_u8(0xB2)]))
+        .expect_err("PrimRegistry wild: registration must not grant L0 host dispatch after A1");
+    assert!(
+        matches!(&err, EvalError::UnknownPrim(p) if p == "wild:echo"),
+        "expected UnknownPrim typed miss, got {err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("host-op-not-registered")
+            && msg.contains("HostOpRegistry")
+            && msg.contains("PrimRegistry"),
+        "Display must name the A1 migration (HostOpRegistry, not PrimRegistry); got: {msg:?}"
+    );
 }
 
 /// Mock floor that records contact — proves `with_floor` routes through the provided Arc, not StdHostFloor.
