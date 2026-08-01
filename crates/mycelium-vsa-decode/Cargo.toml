@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # The VSA algebra kernel (models, cleanup, resonator, reconstruction) this decode layer selects over.
-mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # RFC-0010: the one RFC-0005 selection mechanism, reused for the decode-method site (no parallel
 # selector). Acyclic — `mycelium-select` depends only on `mycelium-core`; this crate legitimately
 # sits above both, so the former `mycelium-vsa -> mycelium-select` edge (which closed the interp
