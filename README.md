@@ -19,7 +19,7 @@ at archive tip `aad96b7a425710db5e91094d4fc2ca21a129e41a` (`archive/main-pre-com
 
 ## Build
 
-MSRV 1.96.1. Path deps on sibling components may still point at monorepo-relative paths — wire git deps in a follow-up (FLAG).
+MSRV 1.96.1. All deps are git-rev pins (no monorepo path deps).
 
 ```bash
 cargo test
