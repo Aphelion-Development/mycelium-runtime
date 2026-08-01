@@ -12,7 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "57ef45b453eef1f02bdfb1f0cad1034dabd32b1f" }
 # The M-356 composition kernel (CancelToken/TaskOutcome/Supervisor/RestartIntensity/Escalation) that
 # `supervision::supervise_with_restart` reuses — already below this crate (mycelium-interp is core
 # tier, stratum 2; see xtask/deps-strata.toml). No cycle: mycelium-interp does not depend on this crate.

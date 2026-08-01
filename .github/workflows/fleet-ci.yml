@@ -26,7 +26,7 @@ jobs:
     name: detect stack
     # micro: file probes only (grep Cargo.toml / pyproject). No compile.
     # Measured tier table: micro = 0.25 cpu / 512 MiB.
-    runs-on: [self-hosted, linux, x64, podman, micro]
+    runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.d.outputs.rust }}
       python: ${{ steps.d.outputs.python }}
@@ -63,7 +63,7 @@ jobs:
     # is tier=large (4 cpu / 8 GiB). Without this label any idle base-label
     # worker (including micro 0.25c/512MiB) can match and OOM rustc.
     # clippy --all-targets measured 1225 MiB (2.4x micro cap) — compile, not lint.
-    runs-on: [self-hosted, linux, x64, podman, large]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: cargo check
@@ -77,7 +77,7 @@ jobs:
     if: needs.detect.outputs.python == 'true'
     # medium: pytest after uv sync installs a dep tree. Measured tier table:
     # medium = 2 cpu / 4 GiB. Pure ruff-only would fit small; install+pytest needs medium.
-    runs-on: [self-hosted, linux, x64, podman, medium]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -113,7 +113,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.rust != 'true' && needs.detect.outputs.python != 'true'
     # micro: echo-only advisory path. No compile, no dep install.
-    runs-on: [self-hosted, linux, x64, podman, micro]
+    runs-on: ubuntu-latest
     steps:
       - run: |
           echo "No Cargo.toml / pyproject detected. fleet-ci reports success with no gates."

@@ -15,7 +15,7 @@ workspace = true
 # Queryable Meta (bounds, dtype, sparsity), Repr, PackScheme, ContentHash — selection's only
 # inputs are the kernel's exact metadata (RFC-0005 §2.5), so core is the only kernel dependency
 # (KC-3: selection stays out of the trusted kernel as its own crate).
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "57ef45b453eef1f02bdfb1f0cad1034dabd32b1f" }
 serde.workspace = true
 # Canonical-JSON serialization for the content-addressed PolicyRef (RFC-0005 §3).
 serde_json.workspace = true

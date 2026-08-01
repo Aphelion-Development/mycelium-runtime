@@ -12,7 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "57ef45b453eef1f02bdfb1f0cad1034dabd32b1f" }
 mycelium-interp = { path = "../mycelium-interp" }
 # The M-210 checker discharges bounded instances through the E2-4 tier-i kernel and consumes the
 # shared {ε,δ,strength} certificate (ADR-010; RFC-0002 §2).

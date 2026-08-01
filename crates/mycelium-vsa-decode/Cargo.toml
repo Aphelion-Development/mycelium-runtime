@@ -19,4 +19,4 @@ mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e8
 # sits above both, so the former `mycelium-vsa -> mycelium-select` edge (which closed the interp
 # cycle) is gone. See DN-68 + xtask/deps-strata.toml.
 mycelium-select = { path = "../mycelium-select" }
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "57ef45b453eef1f02bdfb1f0cad1034dabd32b1f" }
