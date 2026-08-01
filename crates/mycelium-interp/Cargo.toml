@@ -12,7 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "46d2515cbd86d2ae4d1365f4adcd2796737e9f0b" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
 # The Dense paradigm kernel: the dense elementwise prim group (`dense.*`, M-890) delegates to
 # `DenseSpace` — the kernel constructs the result `Value` with its honest per-op tag/bound and the
 # prim wrapper carries it through unchanged (VR-5). Downward-only dep (DN-66: dense sits on core).
@@ -34,7 +34,7 @@ mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230
 # and runs on the growable deep stack, so a crafted deep-but-fuel-cheap value refuses cleanly with
 # `EvalError::DepthLimit` instead of a host-stack `SIGABRT` (RR-29 §0.1). Downward-only leaf dep
 # (DN-68: workstack is a leaf on `std` + `mycelium-stack` — interp stratum 2 → workstack 1).
-mycelium-workstack = { git = "https://github.com/tzervas/mycelium-core", rev = "46d2515cbd86d2ae4d1365f4adcd2796737e9f0b" }
+mycelium-workstack = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
 # M-912 (`enb`): surfaces the kernel's own content-addressing hash (BLAKE3, M-103 —
 # `mycelium-core::content::Canon`/`id::ContentHash` already use it) as the `hash.blake3` prim. Same
 # crate + version the kernel content-addresses with (workspace-pinned), so the wrapper adds no
