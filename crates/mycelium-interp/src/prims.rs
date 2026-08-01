@@ -271,6 +271,34 @@ impl PrimRegistry {
         self.table.insert(name.to_owned(), f);
     }
 
+    /// Register a **host / FFI** op under the `wild:` namespace (RFC-0028 §4.3).
+    ///
+    /// `name` is the host-call form without the `wild:` prefix (e.g. `"fs_read"` →
+    /// prim key `wild:fs_read`). The default [`PrimRegistry::with_builtins`] grants
+    /// **no** host ops — the `@std-sys` host (via `mycelium-std-sys-host` + CLI) must
+    /// call this to populate the table. Empty-by-design until install (never silent G2).
+    ///
+    /// See [`crate::host`] for the install contract (spike resolution 2026-08-01).
+    pub fn register_host(&mut self, name: &str, f: PrimFn) {
+        let key = if name.starts_with("wild:") {
+            name.to_owned()
+        } else {
+            format!("wild:{name}")
+        };
+        self.table.insert(key, f);
+    }
+
+    /// True if a `wild:{name}` (or fully-qualified `wild:…`) host op is registered.
+    #[must_use]
+    pub fn has_host(&self, name: &str) -> bool {
+        let key = if name.starts_with("wild:") {
+            name.to_owned()
+        } else {
+            format!("wild:{name}")
+        };
+        self.table.contains_key(&key)
+    }
+
     /// Look up a primitive by name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<PrimFn> {
