@@ -16,9 +16,9 @@ mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "57ef4
 # The Dense paradigm kernel: the dense elementwise prim group (`dense.*`, M-890) delegates to
 # `DenseSpace` — the kernel constructs the result `Value` with its honest per-op tag/bound and the
 # prim wrapper carries it through unchanged (VR-5). Downward-only dep (DN-66: dense sits on core).
-mycelium-dense = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
+mycelium-dense = { git = "https://github.com/tzervas/mycelium-value", rev = "fd4c3b307918fe6d58251a0b24a81e9f384d65ba" }
 # The verified-numerics kernels: composing an approximate input's bound honestly (M-204; ADR-010).
-mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
+mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "fd4c3b307918fe6d58251a0b24a81e9f384d65ba" }
 # The work-stealing OS-thread Scheduler (M-709/M-861), relocated below mycelium-interp (E25) so
 # the interpreter's own parallel evaluation (M-862) can use it without a
 # mycelium-interp <-> mycelium-std-runtime cycle. Wired into `src/parallel.rs` (M-862): the
@@ -28,7 +28,7 @@ mycelium-sched = { path = "../mycelium-sched" }
 # Value-level model ops (`MapI`/`Fhrr`/`Bsc`) — the kernel constructs the result `Value` with its
 # honest per-model tag/bound and the prim wrapper carries it through unchanged (VR-5).
 # Downward-only dep (ADR-008: vsa sits on core — the M-890 `mycelium-dense` precedent).
-mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
+mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "fd4c3b307918fe6d58251a0b24a81e9f384d65ba" }
 # RFC-0041 W4: the shared never-silent recursion budget + growable-stack guard. The L0 reference
 # interpreter charges this budget at its structural-recursion points (`step`/`subst`/value read-off)
 # and runs on the growable deep stack, so a crafted deep-but-fuel-cheap value refuses cleanly with
