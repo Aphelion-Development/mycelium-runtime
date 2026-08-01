@@ -12,13 +12,13 @@ publish = false
 workspace = true
 
 [dependencies]
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "46d2515cbd86d2ae4d1365f4adcd2796737e9f0b" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
 mycelium-interp = { path = "../mycelium-interp" }
 # The M-210 checker discharges bounded instances through the E2-4 tier-i kernel and consumes the
 # shared {ε,δ,strength} certificate (ADR-010; RFC-0002 §2).
-mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # The M-231 Dense<->VSA swap reuses the M-131 checked capacity instantiation (RFC-0003 §5).
-mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # The canonical RFC-0013 `Diag`/first-fault-envelope record (W-A, DN-142 §4.2): the `swap_check`
 # emitter site (`mode.rs`) presents a `CheckVerdict` through this crate's `Diag`, never a second
 # diagnostic schema (KC-3 / G-9 — `mycelium-diag` depends only on `mycelium-core`, so this adds no

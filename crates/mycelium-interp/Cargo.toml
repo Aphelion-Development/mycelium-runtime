@@ -12,13 +12,13 @@ publish = false
 workspace = true
 
 [dependencies]
-mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "46d2515cbd86d2ae4d1365f4adcd2796737e9f0b" }
+mycelium-core = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
 # The Dense paradigm kernel: the dense elementwise prim group (`dense.*`, M-890) delegates to
 # `DenseSpace` — the kernel constructs the result `Value` with its honest per-op tag/bound and the
 # prim wrapper carries it through unchanged (VR-5). Downward-only dep (DN-66: dense sits on core).
-mycelium-dense = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-dense = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # The verified-numerics kernels: composing an approximate input's bound honestly (M-204; ADR-010).
-mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-numerics = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # The work-stealing OS-thread Scheduler (M-709/M-861), relocated below mycelium-interp (E25) so
 # the interpreter's own parallel evaluation (M-862) can use it without a
 # mycelium-interp <-> mycelium-std-runtime cycle. Wired into `src/parallel.rs` (M-862): the
@@ -28,13 +28,13 @@ mycelium-sched = { path = "../mycelium-sched" }
 # Value-level model ops (`MapI`/`Fhrr`/`Bsc`) — the kernel constructs the result `Value` with its
 # honest per-model tag/bound and the prim wrapper carries it through unchanged (VR-5).
 # Downward-only dep (ADR-008: vsa sits on core — the M-890 `mycelium-dense` precedent).
-mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "6d230ad2023a716704c697ac6812a2062624b4eb" }
+mycelium-vsa = { git = "https://github.com/tzervas/mycelium-value", rev = "4e7e800eeaf392d4dcace425a618b43a528338ef" }
 # RFC-0041 W4: the shared never-silent recursion budget + growable-stack guard. The L0 reference
 # interpreter charges this budget at its structural-recursion points (`step`/`subst`/value read-off)
 # and runs on the growable deep stack, so a crafted deep-but-fuel-cheap value refuses cleanly with
 # `EvalError::DepthLimit` instead of a host-stack `SIGABRT` (RR-29 §0.1). Downward-only leaf dep
 # (DN-68: workstack is a leaf on `std` + `mycelium-stack` — interp stratum 2 → workstack 1).
-mycelium-workstack = { git = "https://github.com/tzervas/mycelium-core", rev = "46d2515cbd86d2ae4d1365f4adcd2796737e9f0b" }
+mycelium-workstack = { git = "https://github.com/tzervas/mycelium-core", rev = "3958d2ea3c3921611e33f1f00e3469b29a939a76" }
 # M-912 (`enb`): surfaces the kernel's own content-addressing hash (BLAKE3, M-103 —
 # `mycelium-core::content::Canon`/`id::ContentHash` already use it) as the `hash.blake3` prim. Same
 # crate + version the kernel content-addresses with (workspace-pinned), so the wrapper adds no
