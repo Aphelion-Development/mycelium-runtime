@@ -1,5 +1,10 @@
 # Fleet standard CI — self-hosted. Honest status on trunk via Actions badge.
 # See docs/FLEET_STANDARDS.md (or plans/fractal/P26_FLEET_STANDARDS.md).
+#
+# TIER LABELS (required): GitHub routes by exact label match. The fleet sizes
+# ephemeral workers from job labels before name heuristics (size_for_job).
+# Without an explicit tier, a micro worker (0.25c/512MiB, e.g. for gitleaks)
+# can pick up cargo check/test and OOM-kill rustc. Pin every job to its tier.
 name: fleet-ci
 
 on:
@@ -19,7 +24,9 @@ permissions:
 jobs:
   detect:
     name: detect stack
-    runs-on: [self-hosted, linux, x64, podman]
+    # micro: file probes only (grep Cargo.toml / pyproject). No compile.
+    # Measured tier table: micro = 0.25 cpu / 512 MiB.
+    runs-on: [self-hosted, linux, x64, podman, micro]
     outputs:
       rust: ${{ steps.d.outputs.rust }}
       python: ${{ steps.d.outputs.python }}
@@ -52,7 +59,11 @@ jobs:
     name: cargo check/test
     needs: detect
     if: needs.detect.outputs.rust == 'true'
-    runs-on: [self-hosted, linux, x64, podman]
+    # large: cargo check/test compiles. Measured fleet intent for this job name
+    # is tier=large (4 cpu / 8 GiB). Without this label any idle base-label
+    # worker (including micro 0.25c/512MiB) can match and OOM rustc.
+    # clippy --all-targets measured 1225 MiB (2.4x micro cap) — compile, not lint.
+    runs-on: [self-hosted, linux, x64, podman, large]
     steps:
       - uses: actions/checkout@v4
       - name: cargo check
@@ -64,7 +75,9 @@ jobs:
     name: python lint/test
     needs: detect
     if: needs.detect.outputs.python == 'true'
-    runs-on: [self-hosted, linux, x64, podman]
+    # medium: pytest after uv sync installs a dep tree. Measured tier table:
+    # medium = 2 cpu / 4 GiB. Pure ruff-only would fit small; install+pytest needs medium.
+    runs-on: [self-hosted, linux, x64, podman, medium]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -99,7 +112,8 @@ jobs:
     name: no stack detected
     needs: detect
     if: needs.detect.outputs.rust != 'true' && needs.detect.outputs.python != 'true'
-    runs-on: [self-hosted, linux, x64, podman]
+    # micro: echo-only advisory path. No compile, no dep install.
+    runs-on: [self-hosted, linux, x64, podman, micro]
     steps:
       - run: |
           echo "No Cargo.toml / pyproject detected. fleet-ci reports success with no gates."
