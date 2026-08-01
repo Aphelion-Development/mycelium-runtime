@@ -96,14 +96,13 @@
 //! silent). `Construct` itself takes the meet of its fields' guarantees (in the [`mycelium_core::Datum`]
 //! summary).
 //!
-//! # Host ops (`wild:`, A1 / RFC-0028 §4.3)
+//! # Host ops (`wild:`, RFC-0028 §4.3 / S-HOST-REGISTRY)
 //! L1 elaborates `wild { name(args) }` to `Node::Op { prim: "wild:name", … }` (KC-3 — no new node).
-//! The runtime half is [`wild`]: a [`HostOpRegistry`] + [`HostCapabilities::ffi`] gate. Default
-//! interpreters register **no** host ops and grant **no** `ffi` (fail closed / pure). Opt in with
-//! [`Interpreter::with_host_floor`]. Unknown `wild:<name>` is a typed
-//! [`EvalError::UnknownPrim`] (`host-op-not-registered`); registered-but-ungranted is
-//! [`EvalError::HostCapabilityDenied`]. This is **not** an elaboration Residual — elab succeeds;
-//! the historical gap was an empty runtime registry.
+//! **Primary table:** [`PrimRegistry`] via [`PrimRegistry::register_host`] / [`install_host_ops`]
+//! (and `mycelium-std-sys-host`). **Transitional A1 floor:** [`HostOpRegistry`] +
+//! [`HostCapabilities::ffi`] via [`Interpreter::with_host_floor`] when PrimRegistry has no key.
+//! Default grants **no** host ops (fail closed / pure). Unknown `wild:<name>` is
+//! [`EvalError::UnknownPrim`] (`host-op-not-registered`).
 //!
 //! # What is *not* here (by scope)
 //! The certified binary↔ternary **swap** is **M-120** (this crate ships the trivial identity swap,
@@ -304,20 +303,15 @@ impl core::fmt::Display for EvalError {
             // capability handle, and the default registry grants none — so an unresolved `wild:` key
             // is an *ungranted host capability*, not a typo. Report it as such (never silent — G2).
             EvalError::UnknownPrim(p) => match p.strip_prefix("wild:") {
-                // Continued lines begin with an explicit `\u{20}` space, not a trailing space before
-                // the `\`: the repo's `trailing-whitespace` hook would strip the latter and silently
-                // fuse the words (`§4.3)dispatches`) — never-silent (G2). (Copilot #508.)
-                // A1 migration: registering `wild:name` on `PrimRegistry` is **ignored** — L0 routes
-                // exclusively through `HostOpRegistry` (bare name) + `ffi`. Name that trap so a
-                // pre-A1 consumer (L1 three-way differential, AOT env-machine) fails with a
-                // diagnosable message rather than a bare unknown-prim (cross-repo contract).
+                // S-HOST-REGISTRY mainline (PKG-A1-RECONCILE): PrimRegistry is the host table.
+                // Continued lines use explicit `\u{20}` so trailing-whitespace hooks cannot fuse words.
                 Some(op) => write!(
                     f,
-                    "host-op-not-registered: `wild:{op}` — the host-op registry (RFC-0028 §4.3 / A1)\
-\u{20}has no handler for `{op}`; register the bare name `{op}` on `HostOpRegistry` (not\
-\u{20}`PrimRegistry`) and grant `ffi` via `Interpreter::with_host_ops` / `with_host_floor`\
-\u{20}(never silent — G2). Note: `PrimRegistry::register(\"wild:{op}\", …)` is ignored on the\
-\u{20}L0 interpreter path after A1"
+                    "host-op-not-registered: `wild:{op}` — no host capability for `{op}` is granted\
+\u{20}in the prim registry (RFC-0028 §4.3 / S-HOST-REGISTRY); register with\
+\u{20}`PrimRegistry::register_host(\"{op}\", …)` or `install_host_ops` / mycelium-std-sys-host\
+\u{20}(never silent — G2). Optional A1 floor: `Interpreter::with_host_floor` still installs\
+\u{20}the min host set via the transitional host-ops path"
                 ),
                 None => write!(f, "unknown primitive: {p}"),
             },
@@ -558,12 +552,16 @@ impl Interpreter {
                     }
                 }
                 // (E-Op-Apply): all arguments are values → apply δ.
-                // A1 / RFC-0028 §4.3: `wild:<name>` is the reserved host-capability namespace.
-                // It never routes through the pure `PrimRegistry` (even if a caller registered a
-                // colliding name there) — only through the host-op registry + `ffi` gate.
+                // S-HOST-REGISTRY (RFC-0028 §4.3 / PKG-A1-RECONCILE): `wild:<name>` primary
+                // dispatch is PrimRegistry (register_host / install_host_ops). Transitional
+                // fallback: HostOpRegistry + ffi for with_host_floor / with_host_ops.
                 let values = collect_values(args)?;
                 let result = if prim.starts_with("wild:") {
-                    crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                    if let Some(f) = self.prims.get(prim) {
+                        f(prim, &values)?
+                    } else {
+                        crate::wild::dispatch_wild(&self.host_ops, self.host_caps, prim, &values)?
+                    }
                 } else {
                     let f = self
                         .prims
