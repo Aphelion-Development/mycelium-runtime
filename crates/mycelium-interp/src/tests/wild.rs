@@ -297,29 +297,43 @@ fn entropy_fill_hard_cap_refuses_oversize() {
     );
 }
 
-/// `wild:` never routes through the pure PrimRegistry even if a colliding name is registered there.
+/// PrimRegistry is primary: a registered `wild:` key is preferred over the transitional
+/// HostOpRegistry floor (S-HOST-REGISTRY). The floor still serves when PrimRegistry has no key.
 #[test]
-fn wild_prefix_never_dispatches_through_pure_prim_registry() {
+fn prim_registry_wild_key_is_preferred_over_host_floor() {
     let mut prims = PrimRegistry::empty();
-    // A malicious/mistaken registration of a wild: key into the pure table must be ignored.
     prims.register("wild:mono_nanos", |_p, _a| {
-        panic!("pure PrimRegistry must not handle wild:");
+        // Distinct payload so we know PrimRegistry won (host floor returns Binary{64}).
+        Err(EvalError::PrimType {
+            prim: "wild:mono_nanos".to_owned(),
+            why: "prim-registry path".to_owned(),
+        })
     });
     let interp = Interpreter::new(prims, Box::new(IdentitySwapEngine)).with_host_floor();
-    // Host floor still wins; no panic from the pure-table trap.
+    let err = interp
+        .eval(&wild_op("mono_nanos", vec![]))
+        .expect_err("PrimRegistry registration must win over host floor");
+    assert!(
+        matches!(err, EvalError::PrimType { ref why, .. } if why == "prim-registry path"),
+        "expected PrimRegistry handler, got {err:?}"
+    );
+}
+
+/// Transitional A1 floor still works when PrimRegistry has no wild: entry.
+#[test]
+fn host_floor_serves_when_prim_registry_has_no_wild_key() {
+    let prims = PrimRegistry::empty();
+    let interp = Interpreter::new(prims, Box::new(IdentitySwapEngine)).with_host_floor();
     let v = interp
         .eval(&wild_op("mono_nanos", vec![]))
-        .expect("host path must win");
+        .expect("host floor path must serve");
     assert_eq!(v.repr(), &Repr::Binary { width: 64 });
 }
 
-/// Cross-repo migration pin (A1): pre-A1 consumers registered `wild:name` on `PrimRegistry` and
-/// constructed `Interpreter::new(prims, …)`. After A1 that registration is ignored — L0 requires
-/// `HostOpRegistry` + `ffi`. This test locks the refuse + diagnostic so a fleet pin-bump of
-/// mycelium-l1 (three-way wild differential) fails closed with a named migration path, never a
-/// silent wrong value and never an opaque miss.
+/// S-HOST-REGISTRY mainline (PKG-A1-RECONCILE): PrimRegistry **is** the host table.
+/// Registering `wild:name` (or `register_host`) grants L0 dispatch without HostOpRegistry.
 #[test]
-fn prim_registry_wild_registration_is_ignored_with_migration_diagnostic() {
+fn prim_registry_wild_registration_grants_dispatch_on_mainline() {
     let mut prims = PrimRegistry::with_builtins();
     prims.register("wild:echo", |_p, args| match args {
         [v] => Ok((*v).clone()),
@@ -328,22 +342,11 @@ fn prim_registry_wild_registration_is_ignored_with_migration_diagnostic() {
             why: "test echo expects 1 arg".to_owned(),
         }),
     });
-    // Pre-A1 shape: PrimRegistry only, no HostOpRegistry, no ffi.
     let interp = Interpreter::new(prims, Box::new(IdentitySwapEngine));
-    let err = interp
+    let out = interp
         .eval(&wild_op("echo", vec![bin_u8(0xB2)]))
-        .expect_err("PrimRegistry wild: registration must not grant L0 host dispatch after A1");
-    assert!(
-        matches!(&err, EvalError::UnknownPrim(p) if p == "wild:echo"),
-        "expected UnknownPrim typed miss, got {err:?}"
-    );
-    let msg = err.to_string();
-    assert!(
-        msg.contains("host-op-not-registered")
-            && msg.contains("HostOpRegistry")
-            && msg.contains("PrimRegistry"),
-        "Display must name the A1 migration (HostOpRegistry, not PrimRegistry); got: {msg:?}"
-    );
+        .expect("PrimRegistry wild: registration must grant L0 host dispatch on mainline");
+    assert_eq!(out, bin_u8(0xB2));
 }
 
 /// Mock floor that records contact — proves `with_floor` routes through the provided Arc, not StdHostFloor.
