@@ -191,7 +191,9 @@ fn wild_read_capped_os_open_failure() {
         "read_capped",
         vec![bytes_val(path_bytes.as_bytes()), bin_u64(64)],
     );
-    let err = interp.eval(&node).expect_err("missing path must fail closed (explicit error)");
+    let err = interp
+        .eval(&node)
+        .expect_err("missing path must fail closed (explicit error)");
     assert!(
         matches!(err, EvalError::PrimType { .. }),
         "expected PrimType OS-open failure, got {err:?}"
