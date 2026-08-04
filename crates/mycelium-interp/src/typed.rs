@@ -49,7 +49,7 @@
 
 use std::collections::BTreeMap;
 
-use mycelium_core::GuaranteeStrength;
+use mycelium_core::{FloatWidth, GuaranteeStrength};
 
 use crate::prims::PrimFn;
 
@@ -87,9 +87,16 @@ pub enum TySpec {
     Bool,
     /// The nullary unit type (an effectful prim with no meaningful result, e.g. a write).
     Unit,
-    /// A first-class scalar float — mirrors [`mycelium_core::Repr::Float`] (frozen-tag width is
-    /// out of scope for v0; see [`WidthSpec`]'s monomorphic-v0 note).
-    Float,
+    /// A first-class scalar float — mirrors [`mycelium_core::Repr::Float`], INCLUDING its width.
+    ///
+    /// The frozen surface listed a bare `Float`. `Repr::Float` is width-carrying via the exported
+    /// [`FloatWidth`], so carrying it here keeps `TySpec` a faithful mirror — every other tag
+    /// already carries its width. To be precise about the benefit: [`FloatWidth`] currently has a
+    /// SINGLE variant (`F64`), so a bare tag could not actually confuse two widths today. This is
+    /// mirror fidelity and forward-compatibility, NOT a live soundness fix — when a second width
+    /// is added, a bare tag would silently accept the wrong one, and changing the shape then would
+    /// break every consumer. Corrected now, while there are none.
+    Float(FloatWidth),
     /// A first-class indexed homogeneous sequence of `N` elements of the boxed element type —
     /// mirrors [`mycelium_core::Repr::Seq`]'s `{ elem: Box<Repr>, len: u32 }` shape.
     Seq(Box<TySpec>, u32),
@@ -109,7 +116,14 @@ pub enum TySpec {
 pub struct PrimSig {
     /// The prim's checked (kernel) name, e.g. `"std.io.serialize.to_json"` — distinct from the
     /// dispatch key, which is this name under the [`PRIM_PREFIX`] namespace.
-    pub name: &'static str,
+    ///
+    /// OWNED, not `&'static str`. The frozen surface text originally said `&'static str`, which
+    /// contradicted its own stated mitigation for near-polymorphic prims: "registering one
+    /// [`PrimSig`] per concretely-instantiated width actually exercised by a call site". Names
+    /// generated per instantiation cannot be `&'static str` without leaking, so a provider
+    /// (`mycelium-std-io`, `mycelium-std-net`) could not have implemented that mitigation at all.
+    /// Corrected before any consumer existed — see S-PRIMSIG-SCHEMA's correction note.
+    pub name: String,
     /// Per-argument checked types, in order (the length is the prim's arity).
     pub params: Vec<TySpec>,
     /// The checked result type.
@@ -206,9 +220,9 @@ mod tests {
         .unwrap()
     }
 
-    fn id_sig(name: &'static str) -> PrimSig {
+    fn id_sig(name: &str) -> PrimSig {
         PrimSig {
-            name,
+            name: name.to_owned(),
             params: vec![TySpec::Binary(WidthSpec(1))],
             ret: TySpec::Binary(WidthSpec(1)),
             effects: vec![],
@@ -304,5 +318,42 @@ mod tests {
             dispatch_typed(&r2, "prim:also_unregistered", &[&v]),
             Err(EvalError::UnknownPrim(ref p)) if p == "prim:also_unregistered"
         ));
+    }
+    /// A provider must be able to register a signature whose name is built AT RUNTIME — the
+    /// per-instantiation mitigation [`WidthSpec`]'s doc proposes. This is impossible if `name`
+    /// is `&'static str`, so this test pins the owned-name correction.
+    #[test]
+    fn signature_names_may_be_generated_at_runtime() {
+        let mut reg = TypedPrimRegistry::empty();
+        for w in [8u32, 16, 32] {
+            let generated = format!("std.io.serialize.to_json.binary{w}");
+            let sig = PrimSig {
+                name: generated.clone(),
+                params: vec![TySpec::Binary(WidthSpec(w))],
+                ret: TySpec::Bytes,
+                effects: vec![],
+                guarantee: GuaranteeStrength::Exact,
+            };
+            reg.register_typed(&generated, sig, typed_id);
+        }
+        assert!(reg.has_typed("std.io.serialize.to_json.binary8"));
+        assert!(reg.has_typed("std.io.serialize.to_json.binary32"));
+        assert_eq!(
+            reg.sigs().count(),
+            3,
+            "one signature per instantiated width"
+        );
+    }
+
+    /// `TySpec::Float` must CARRY its width so it stays a faithful mirror of `Repr::Float` and so
+    /// adding a second [`FloatWidth`] variant later is not a breaking change to this shape.
+    /// Note: `FloatWidth` has one variant today, so this pins the shape, not a live distinction.
+    #[test]
+    fn float_tyspec_carries_its_width() {
+        let f = TySpec::Float(FloatWidth::F64);
+        match f {
+            TySpec::Float(w) => assert_eq!(w, FloatWidth::F64, "the width must round-trip"),
+            other => panic!("expected Float, got {other:?}"),
+        }
     }
 }
