@@ -2,9 +2,9 @@ name: ci
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, master, dev]
   pull_request:
-    branches: [main]
+    branches: [main, master, dev]
 jobs:
   check:
     runs-on: ubuntu-latest
