@@ -119,6 +119,7 @@ pub mod parallel;
 pub mod prims;
 pub mod supervise;
 pub mod swap;
+pub mod typed;
 pub mod wild;
 
 #[cfg(test)]
